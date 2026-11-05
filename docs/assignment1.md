@@ -89,25 +89,41 @@ The expected transfer fee for each test case is calculated by multiplying the tr
 | TC15 (R7) | N | 10 | 2,650 | 2,830 | 0.1% | 0.01 |
 | TC16 (R8) | N | 10 | 1,725 | 920 | 0.2% | 0.02 |
 
-### Transfer Test Results
+## Transfer: Test Results
 
-Table will be completed after running the JUnit tests
+Results from running `bank.utils.FeesCalculatorTransferTest` (JUnit 5, `mvn -B test`); the same results appear in the CI run on the pull request. Fees are compared as `double` values with a tolerance of `1e-9`, so floating point rounding is not reported as a failure. "Actual fee" is the value returned by `FeesCalculator.calculateTransferFee`. S-R*n* and N-R*n* refer to rule *n* of the student and non-student decision tables.
 
-| Test Case | Expected Fee ($) | Actual Fee ($) | Result |
-|---|---|---|---|
-| TC1 | 0.148 | TBD | Not Run |
-| TC2 | 0.074 | TBD | Not Run |
-| TC3 | 0.074 | TBD | Not Run |
-| TC4 | 0.037 | TBD | Not Run |
-| TC5 | 0.2005 | TBD | Not Run |
-| TC6 | 0.50125 | TBD | Not Run |
-| TC7 | 0.10025 | TBD | Not Run |
-| TC8 | 1.0025 | TBD | Not Run |
-| TC9 | 2.02 | TBD | Not Run |
-| TC10 | 4.04 | TBD | Not Run |
-| TC11 | 0.808 | TBD | Not Run |
-| TC12 | 1.616 | TBD | Not Run |
-| TC13 | 0.05 | TBD | Not Run |
-| TC14 | 0.10 | TBD | Not Run |
-| TC15 | 0.01 | TBD | Not Run |
-| TC16 | 0.02 | TBD | Not Run |
+Summary: 16 test cases, 0 passed, 16 failed.
+
+| Test case | Student | Amount | From balance | To balance | Expected fee (rate) | Actual fee | Result |
+|---|---|---|---|---|---|---|---|
+| TC1 (S-R1) | Yes | 148 | 1675 | 642 | 0.148 (0.1%) | 3.7 | **Fail** |
+| TC2 (S-R2) | Yes | 148 | 1329 | 1236 | 0.074 (0.05%) | 1.85 | **Fail** |
+| TC3 (S-R3) | Yes | 148 | 2780 | 873 | 0.074 (0.05%) | 3.7 | **Fail** |
+| TC4 (S-R4) | Yes | 148 | 3455 | 1450 | 0.037 (0.025%) | 1.85 | **Fail** |
+| TC5 (S-R5) | Yes | 401 | 1812 | 725 | 0.2005 (0.05%) | 10.025 | **Fail** |
+| TC6 (S-R6) | Yes | 401 | 3670 | 1825 | 0.50125 (0.125%) | 5.0125 | **Fail** |
+| TC7 (S-R7) | Yes | 401 | 1543 | 1375 | 0.10025 (0.025%) | 5.0125 | **Fail** |
+| TC8 (S-R8) | Yes | 401 | 2930 | 518 | 1.0025 (0.25%) | 10.025 | **Fail** |
+| TC9 (N-R1) | No | 808 | 5720 | 3180 | 2.02 (0.25%) | 44.44 | **Fail** |
+| TC10 (N-R2) | No | 808 | 4650 | 725 | 4.04 (0.5%) | 40.4 | **Fail** |
+| TC11 (N-R3) | No | 808 | 1480 | 2340 | 0.808 (0.1%) | 44.44 | **Fail** |
+| TC12 (N-R4) | No | 808 | 1625 | 685 | 1.616 (0.2%) | 40.4 | **Fail** |
+| TC13 (N-R5) | No | 10 | 6250 | 3750 | 0.05 (0.5%) | 0.5 | **Fail** |
+| TC14 (N-R6) | No | 10 | 4875 | 1450 | 0.10 (1%) | 0.5 | **Fail** |
+| TC15 (N-R7) | No | 10 | 2650 | 2830 | 0.01 (0.1%) | 0.5 | **Fail** |
+| TC16 (N-R8) | No | 10 | 1725 | 920 | 0.02 (0.2%) | 1.0 | **Fail** |
+
+## Transfer: Fault Localization
+
+Failing test cases that expose the same fault are grouped into one entry. A test case can be listed under more than one fault when it passes through several faulty conditions.
+
+| Fault | Exposed by | Location | Suspected fault | Justification |
+|---|---|---|---|---|
+| T1 | TC1-TC4 | `bank.utils.FeesCalculator.calculateTransferFee`, student branch, `if (amount < 100.00)` | The student amount threshold is $100 instead of $200. | $148 is below $200, so the small-amount rates (0.1% / 0.05% / 0.025%) apply, but the code uses its large-amount branch and charges 2.5% / 1.25%. |
+| T2 | TC1, TC2, TC5, TC7 | `calculateTransferFee`, student branch, `if (fromAccountBalance < 1000.00)` (both amount sub-branches) | The student source-balance threshold is $1,000 instead of $2,000. | Source balances of $1,329-$1,812 are below $2,000 but get the high-balance rates (TC5 is charged 2.5%, the rate for a source balance of $2,000 or more). |
+| T3 | TC6, TC8 (contributes to TC1-TC8) | `calculateTransferFee`, student rate constants (`0.0125`, `0.025`, and the others in the branch) | Every student rate is 10× the specification (for example 0.0125 instead of 0.00125, 0.025 instead of 0.0025). | TC6 and TC8 land in the correct rule and still return exactly 10× the expected fee. |
+| T4 | TC11, TC12 | `calculateTransferFee`, non-student `amount >= 100` branch, `if (fromAccountBalance < 1000.00)` | The source-balance threshold is $1,000 instead of $2,000. | Source balances of $1,480 and $1,625 are treated as high balances and charged 5.5% / 5% instead of 0.1% / 0.2%. |
+| T5 | TC9, TC10 (contributes to TC11, TC12) | `calculateTransferFee`, non-student `amount >= 100` branch, `feePercentage = 0.05` and `feePercentage = 0.055` | The rates are 0.05 and 0.055 instead of 0.005 and 0.0025. | TC10 returns 10× the expected fee, and TC9 is charged 5.5%, higher than any rate in the specification. |
+| T6 | TC14, TC15, TC16 | `calculateTransferFee`, non-student `amount < 100` branch, `if (fromAccountBalance < 1000.00)` and `if (toAccountBalance < 1000.00)` | The thresholds are $1,000 instead of $4,000 (source) and $2,000 (destination). | TC15/TC16 (source $2,650 / $1,725, below $4,000) and TC14 (destination $1,450, below $2,000) are routed to the wrong rule. |
+| T7 | TC13 (contributes to TC14-TC16) | `calculateTransferFee`, non-student `amount < 100` branch, rates `0.1` and `0.05` | The rates are 10× the specification (1% and 0.5% are written as 0.1 and 0.05). | TC13 lands in the correct rule and returns 0.5, exactly 10× the expected 0.05. |
