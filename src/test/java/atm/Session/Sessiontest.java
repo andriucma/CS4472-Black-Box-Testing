@@ -1,19 +1,46 @@
 package atm.session;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.mock;
 
+import atm.dispatcher.MessageDispatcher;
+import atm.exceptions.InvalidAmountException;
 import atm.exceptions.InvalidPinFormatException;
-import atm.utils.CashValidator;
+import atm.session.transactions.ATMWithdrawal;
+import atm.ui.panels.MainPanel;
 import atm.utils.FormatChecker;
 
+/**
+ * ATM Session black-box tests: Robust (single-fault) Boundary Value Analysis
+ * for the two session inputs - PIN format and withdrawal amount.
+ *
+ * Account under test (per the handout): daily limit $1,000, available balance
+ * $5,000, so $1,000 is the amount's upper boundary. The amount tests drive the
+ * real Session object (Session.setAmount) with a withdrawal transaction; the
+ * UI panel and bank dispatcher are mocked so the test exercises only the
+ * input validation. PIN format is validated by FormatChecker.checkPinFormat
+ * (reached in the session flow via ATM.checkPin), since Session.addPin does not
+ * validate format itself.
+ *
+ * Expected results are taken from the SPECIFICATION:
+ *   - a valid PIN is exactly 5 digits;
+ *   - a valid withdrawal amount is dispensable in $20/$50 bills and within the
+ *     $1,000 daily limit.
+ * Tests are expected to fail where the code contains a planted fault.
+ */
 class SessionTest {
 
     private final FormatChecker formatChecker = new FormatChecker();
+
+    /** A Session set up for a withdrawal transaction, with UI/bank mocked. */
+    private Session withdrawalSession() {
+        Session session = new Session(mock(MainPanel.class), mock(MessageDispatcher.class));
+        session.setTransaction(new ATMWithdrawal());
+        return session;
+    }
 
     // ----- Variable 1: PIN format (amount held at nominal = $500) -----
 
@@ -61,45 +88,49 @@ class SessionTest {
                 () -> formatChecker.checkPinFormat("100000".toCharArray()));
     }
 
+    // ----- Variable 2: Withdrawal amount via Session.setAmount (PIN nominal) -----
+    // A valid amount is accepted (no exception); an invalid amount throws
+    // InvalidAmountException. Expected outcomes come from the specification.
+
     @Test
-    @DisplayName("A1 min-: $10 (below $20 min) -> rejected")
+    @DisplayName("A1 min-: $10 (below $20 min) -> InvalidAmountException")
     void amountBelowMin() {
-        assertFalse(CashValidator.validateWithdrawal(10));
+        assertThrows(InvalidAmountException.class, () -> withdrawalSession().setAmount(10));
     }
 
     @Test
     @DisplayName("A2 min: $20 -> accepted")
     void amountMin() {
-        assertTrue(CashValidator.validateWithdrawal(20));
+        assertDoesNotThrow(() -> withdrawalSession().setAmount(20));
     }
 
     @Test
     @DisplayName("A3 min+: $40 (next dispensable; $30 is not) -> accepted")
     void amountMinPlus() {
-        assertTrue(CashValidator.validateWithdrawal(40));
+        assertDoesNotThrow(() -> withdrawalSession().setAmount(40));
     }
 
     @Test
     @DisplayName("A4 nom: $500 -> accepted")
     void amountNominal() {
-        assertTrue(CashValidator.validateWithdrawal(500));
+        assertDoesNotThrow(() -> withdrawalSession().setAmount(500));
     }
 
     @Test
     @DisplayName("A5 max-: $980 (one $20 below limit; 20x49) -> accepted")
     void amountMaxMinus() {
-        assertTrue(CashValidator.validateWithdrawal(980));
+        assertDoesNotThrow(() -> withdrawalSession().setAmount(980));
     }
 
     @Test
     @DisplayName("A6 max: $1000 (daily limit) -> accepted")
     void amountMax() {
-        assertTrue(CashValidator.validateWithdrawal(1000));
+        assertDoesNotThrow(() -> withdrawalSession().setAmount(1000));
     }
 
     @Test
-    @DisplayName("A7 max+: $1020 (exceeds $1000 daily limit) -> rejected")
+    @DisplayName("A7 max+: $1020 (exceeds $1000 daily limit) -> InvalidAmountException")
     void amountAboveMax() {
-        assertFalse(CashValidator.validateWithdrawal(1020));
+        assertThrows(InvalidAmountException.class, () -> withdrawalSession().setAmount(1020));
     }
 }
