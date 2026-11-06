@@ -1,9 +1,13 @@
 package bank.utils;
 
+import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 
@@ -31,6 +35,25 @@ class FeesCalculatorWithdrawalTest {
             }
         }
         return amount * pct;
+    }
+
+    static Stream<Arguments> withdrawalCases() {
+        List<Arguments> cases = new ArrayList<>();
+        for (int amount : AMOUNTS) {
+            for (double balance : BALANCES) {
+                String id = String.format("NS amount=%d balance=%.0f", amount, balance);
+                cases.add(Arguments.of(id, amount, balance, false, Calendar.MONDAY));
+            }
+        }
+        int[] days = {Calendar.MONDAY, Calendar.SATURDAY};
+        for (int amount : AMOUNTS) {
+            for (int day : days) {
+                String label = (day == Calendar.SATURDAY) ? "weekend" : "weekday";
+                String id = String.format("ST amount=%d %s", amount, label);
+                cases.add(Arguments.of(id, amount, 2500.0, true, day));
+            }
+        }
+        return cases.stream();
     }
 
     @ParameterizedTest(name = "{0}")
