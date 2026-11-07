@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (Checkstyle)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 11 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+          cache: maven
+
+      # Lint failures always fail this job, block merge 
+      - name: Run Checkstyle
+        run: mvn -B checkstyle:check -Dcheckstyle.config.location=checkstyle.xml
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine test mode from PR labels
+        id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels) }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            echo "Push to dev: running suite as informational only."
+            echo "mode=informational" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          has_tests=$(echo "$LABELS_JSON" | jq '[.[]?.name] | any(. == "phase:tests")')
+          has_fix=$(echo "$LABELS_JSON" | jq '[.[]?.name] | any(. == "phase:fix")')
+          echo "phase:tests present: $has_tests"
+          echo "phase:fix present:   $has_fix"
+
+          if [ "$has_tests" = "true" ] && [ "$has_fix" = "false" ]; then
+            echo "mode=tests" >> "$GITHUB_OUTPUT"
+          elif [ "$has_fix" = "true" ] && [ "$has_tests" = "false" ]; then
+            echo "mode=fix" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error title=Invalid phase label::This PR must have exactly one of the labels 'phase:tests' or 'phase:fix' (found phase:tests=$has_tests, phase:fix=$has_fix)."
+            exit 1
+          fi
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 11 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+          cache: maven
+
+      # phase:tests -> new tests are expected to fail; failures are tolerated.
+      - name: Run tests (phase:tests, failures tolerated)
+        if: steps.mode.outputs.mode == 'tests'
+        run: mvn -B -Dmaven.test.failure.ignore=true test
+
+      # phase:fix -> the whole suite must pass.
+      - name: Run tests (phase:fix, must pass)
+        if: steps.mode.outputs.mode == 'fix'
+        run: mvn -B test
+
+      # Push to dev -> informational only.
+      - name: Run tests (push to dev, informational)
+        if: steps.mode.outputs.mode == 'informational'
+        run: mvn -B -Dmaven.test.failure.ignore=true test
+
+      
+      - name: Generate JaCoCo report
+        if: always() && steps.mode.outcome == 'success'
+        continue-on-error: true
+        run: |
+          if [ -f target/jacoco.exec ]; then
+            mvn -B org.jacoco:jacoco-maven-plugin:0.8.12:report
+          else
+            echo "::warning::target/jacoco.exec not found; is jacoco-maven-plugin prepare-agent configured in pom.xml?"
+          fi
+
+      # Informational: fail_on 'nothing' keeps this check green regardless of test results.
+      - name: Publish JUnit results
+        if: always() && steps.mode.outcome == 'success'
+        continue-on-error: true
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: target/surefire-reports/*.xml
+          check_name: JUnit Results
+          comment_mode: ${{ github.event_name == 'pull_request' && 'always' || 'off' }}
+          fail_on: nothing
+
+      # Informational: coverage comment on the PR, never blocks.
+      - name: Publish JaCoCo coverage comment
+        if: always() && steps.mode.outcome == 'success' && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: madrapps/jacoco-report@v1.7.1
+        with:
+          paths: ${{ github.workspace }}/target/site/jacoco/jacoco.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: JaCoCo Coverage
+          update-comment: true
+          min-coverage-overall: 0
+          min-coverage-changed-files: 0
